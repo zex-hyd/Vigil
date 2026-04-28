@@ -15,6 +15,20 @@ _DEFAULT_NORM_THRESHOLD = 100.0
 _COOLDOWN_STEPS = 10
 
 
+def _session_config_payload() -> dict:
+    """Merge ``@watch(config={...})`` into gradient events for the rule engine."""
+    try:
+        import vigil as _v
+
+        s = _v.current_session()
+        if s is None:
+            return {}
+        cfg = getattr(s, "_config", None)
+        return dict(cfg) if cfg else {}
+    except Exception:
+        return {}
+
+
 def install(model: "nn.Module", emitter: "Emitter", project: str, step_fn, norm_threshold: float = _DEFAULT_NORM_THRESHOLD) -> None:
     """Register per-parameter gradient hooks on all model parameters."""
     import math
@@ -91,13 +105,14 @@ def _emit_with_cooldown(
 def _emit_gradient_event(emitter, project, step: int, event_type: str, param_name: str, grad_norm: float) -> None:
     from vigil.events import TrainingEvent
 
+    payload = dict(_session_config_payload())
+    payload["param_name"] = param_name
+    payload["grad_norm"] = grad_norm
+
     event = TrainingEvent(
         project=project,
         step=step,
         event_type=event_type,
-        payload={
-            "param_name": param_name,
-            "grad_norm": grad_norm,
-        },
+        payload=payload,
     )
     emitter.emit(event)
