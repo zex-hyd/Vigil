@@ -94,6 +94,21 @@ def _try_register_oom_observer(emitter, project, step_fn, torch) -> None:
         pass
 
 
+def capture_if_cuda_oom(emitter: "Emitter", project: str, step_fn, exc: BaseException) -> None:
+    """When the user catches ``torch.cuda.OutOfMemoryError`` outside ``@watch``, ``sys.excepthook``
+    never runs — call this from ``session.run`` so OOM events still enqueue."""
+    try:
+        import torch
+    except ImportError:
+        return
+    if not _is_cuda_oom(exc):
+        return
+    try:
+        _capture_oom(emitter, project, step_fn, exc, torch)
+    except Exception:
+        pass
+
+
 def _is_cuda_oom(exc) -> bool:
     if exc is None:
         return False

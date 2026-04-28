@@ -124,7 +124,16 @@ class _TrainingSession:
         # The recommended pattern: user calls vigil.current_session() inside train()
         _push_session(self)
         try:
-            return fn(*args, **kwargs)
+            try:
+                return fn(*args, **kwargs)
+            except BaseException as exc:
+                # Outer ``except CUDA OOM`` skips sys.excepthook — still record the event here.
+                try:
+                    from vigil.hooks.cuda_hook import capture_if_cuda_oom
+                    capture_if_cuda_oom(self._emitter, self.project, self._step_fn, exc)
+                except Exception:
+                    pass
+                raise
         finally:
             _pop_session()
             self._emitter.shutdown(wait=True)
