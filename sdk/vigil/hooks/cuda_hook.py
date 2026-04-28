@@ -107,8 +107,10 @@ def capture_if_cuda_oom(emitter: "Emitter", project: str, step_fn, exc: BaseExce
         _capture_oom(emitter, project, step_fn, exc, torch)
         # Deliver on caller thread — Colab/Jupyter often hides daemon-thread prints.
         emitter.flush_now()
-    except Exception:
-        pass
+    except Exception as e:
+        import sys
+
+        print(f"Vigil: OOM capture/flush failed: {e!r}", file=sys.stderr, flush=True)
 
 
 def _is_cuda_oom(exc) -> bool:

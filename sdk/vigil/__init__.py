@@ -131,8 +131,8 @@ class _TrainingSession:
                 try:
                     from vigil.hooks.cuda_hook import capture_if_cuda_oom
                     capture_if_cuda_oom(self._emitter, self.project, self._step_fn, exc)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"Vigil: capture_if_cuda_oom wrapper failed: {e!r}", file=sys.stderr, flush=True)
                 raise
         finally:
             _pop_session()

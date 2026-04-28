@@ -50,8 +50,8 @@ class Emitter:
         if self._on_events:
             try:
                 self._on_events(batch)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Vigil: emitter callback failed: {e!r}", file=sys.stderr, flush=True)
         else:
             for event in batch:
                 self._default_sink(event)
