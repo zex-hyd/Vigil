@@ -83,6 +83,27 @@ def _rule_nan_loss_no_warmup() -> Rule:
     )
 
 
+def _rule_gradient_explosion_no_clip() -> Rule:
+    def condition(event: TrainingEvent, ctx: RuleContext) -> bool:
+        norm = event.payload.get("grad_norm", 0)
+        return (
+            event.event_type == "gradient_explosion"
+            and isinstance(norm, (int, float))
+            and norm > 100
+        )
+
+    def fix(event: TrainingEvent, ctx: RuleContext) -> str:
+        return "add torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) before optimizer.step()"
+
+    return Rule(
+        name="gradient_explosion_no_clip",
+        condition=condition,
+        diagnosis="gradient norm exploding — no gradient clipping applied",
+        fix=fix,
+        confidence=0.88,
+    )
+
+
 def _rule_dataloader_bottleneck() -> Rule:
     def condition(event: TrainingEvent, ctx: RuleContext) -> bool:
         return (
@@ -110,6 +131,7 @@ class RuleEngine:
         self._rules: list[Rule] = [
             _rule_oom_grad_accum(),
             _rule_nan_loss_no_warmup(),
+            _rule_gradient_explosion_no_clip(),
             _rule_dataloader_bottleneck(),
         ]
 
