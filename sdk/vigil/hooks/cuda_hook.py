@@ -10,6 +10,24 @@ if TYPE_CHECKING:
 _ORIG_MALLOC = None
 _installed = False
 
+# Skip duplicate OOM emits when allocator observer + handled-exception path both fire.
+_LAST_OOM_EMIT_NS = 0
+_OOM_EMIT_DEBOUNCE_NS = 150_000_000
+
+
+def _training_payload_from_session() -> dict:
+    """Merge ``@watch(config={...})`` into OOM payloads so rule engine sees batch_size etc."""
+    try:
+        import vigil as _v
+
+        s = _v.current_session()
+        if s is None:
+            return {}
+        cfg = getattr(s, "_config", None)
+        return dict(cfg) if cfg else {}
+    except Exception:
+        return {}
+
 
 def install(emitter: "Emitter", project: str, step_fn) -> None:
     """
@@ -150,6 +168,14 @@ def _capture_oom(emitter, project, step_fn, exc, torch) -> None:
 
 
 def _capture_oom_raw(emitter, project, step_fn, torch, requested_bytes, allocated_bytes, free_bytes) -> None:
+    global _LAST_OOM_EMIT_NS
+    import time
+
+    now = time.time_ns()
+    if now - _LAST_OOM_EMIT_NS < _OOM_EMIT_DEBOUNCE_NS:
+        return
+    _LAST_OOM_EMIT_NS = now
+
     from vigil.events import TrainingEvent
 
     snapshot = None
@@ -161,16 +187,22 @@ def _capture_oom_raw(emitter, project, step_fn, torch, requested_bytes, allocate
     except Exception:
         pass
 
-    event = TrainingEvent(
-        project=project,
-        step=step_fn(),
-        event_type="oom",
-        payload={
+    extras = _training_payload_from_session()
+    payload = dict(extras)
+    payload.update(
+        {
             "allocated_bytes": allocated_bytes,
             "reserved_bytes": free_bytes,
             "requested_bytes": requested_bytes,
             "snapshot_summary": snapshot,
-        },
+        }
+    )
+
+    event = TrainingEvent(
+        project=project,
+        step=step_fn(),
+        event_type="oom",
+        payload=payload,
     )
     emitter.emit(event)
 

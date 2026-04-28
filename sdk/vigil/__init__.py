@@ -47,6 +47,7 @@ def watch(
     project: str,
     norm_threshold: float = 100.0,
     auto_wrap_dataloaders: bool = True,
+    config: dict | None = None,
 ):
     """
     Decorator that instruments a training function with Vigil observability hooks.
@@ -56,6 +57,8 @@ def watch(
         norm_threshold: Gradient norm above which an explosion event is fired.
         auto_wrap_dataloaders: If True, wraps DataLoader objects found in local
             scope after the first forward pass. Set False for manual wrapping.
+        config: Optional training context merged into events (for the rule engine), e.g.
+            ``batch_size``, ``gradient_accumulation_steps``, ``lr_scheduler``, ``num_workers``.
     """
     def decorator(fn: F) -> F:
         @functools.wraps(fn)
@@ -64,6 +67,7 @@ def watch(
                 project=project,
                 norm_threshold=norm_threshold,
                 auto_wrap_dataloaders=auto_wrap_dataloaders,
+                config=config,
             )
             return session.run(fn, args, kwargs)
         return wrapper  # type: ignore[return-value]
@@ -73,10 +77,11 @@ def watch(
 class _TrainingSession:
     """Manages the lifecycle of a single watched training run."""
 
-    def __init__(self, project: str, norm_threshold: float, auto_wrap_dataloaders: bool):
+    def __init__(self, project: str, norm_threshold: float, auto_wrap_dataloaders: bool, config: dict | None = None):
         self.project = project
         self.norm_threshold = norm_threshold
         self.auto_wrap_dataloaders = auto_wrap_dataloaders
+        self._config = dict(config or {})
         self._step = 0
         self._rule_engine = RuleEngine() if _rule_engine_available else None
         if self._rule_engine is None and _rule_engine_import_error:
