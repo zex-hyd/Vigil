@@ -10,25 +10,30 @@ if TYPE_CHECKING:
 
 _DEFAULT_NORM_THRESHOLD = 100.0
 
-# Emit at most one event per (param, event_type) every this many steps.
-# Prevents flooding when gradients are consistently exploding.
+# Emit at most one event per event_type every this many training steps (global across all params).
+# Prevents flooding when many layers exceed the threshold every step.
 _COOLDOWN_STEPS = 10
 
 
 def install(model: "nn.Module", emitter: "Emitter", project: str, step_fn, norm_threshold: float = _DEFAULT_NORM_THRESHOLD) -> None:
     """Register per-parameter gradient hooks on all model parameters."""
+    import math
+
     import torch
 
-    # Shared cooldown table: (param_name, event_type) -> last_emitted_step
-    cooldown: dict[tuple[str, str], int] = {}
+    if math.isinf(norm_threshold) or norm_threshold > 1e300:
+        return
+
+    # event_type -> last emitted step (shared by all params)
+    global_cooldown: dict[str, int] = {}
 
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        _register_hook(name, param, emitter, project, step_fn, norm_threshold, torch, cooldown)
+        _register_hook(name, param, emitter, project, step_fn, norm_threshold, torch, global_cooldown)
 
 
-def _register_hook(name: str, param, emitter, project, step_fn, norm_threshold, torch, cooldown: dict) -> None:
+def _register_hook(name: str, param, emitter, project, step_fn, norm_threshold, torch, global_cooldown: dict[str, int]) -> None:
     def _hook(grad):
         if grad is None:
             return grad
@@ -38,7 +43,7 @@ def _register_hook(name: str, param, emitter, project, step_fn, norm_threshold, 
 
             if torch.isnan(grad).any():
                 _emit_with_cooldown(
-                    cooldown=cooldown,
+                    global_cooldown=global_cooldown,
                     emitter=emitter,
                     project=project,
                     step=step,
@@ -51,7 +56,7 @@ def _register_hook(name: str, param, emitter, project, step_fn, norm_threshold, 
             norm = grad.detach().norm().item()
             if norm > norm_threshold:
                 _emit_with_cooldown(
-                    cooldown=cooldown,
+                    global_cooldown=global_cooldown,
                     emitter=emitter,
                     project=project,
                     step=step,
@@ -67,12 +72,19 @@ def _register_hook(name: str, param, emitter, project, step_fn, norm_threshold, 
     param.register_hook(_hook)
 
 
-def _emit_with_cooldown(cooldown: dict, emitter, project, step: int, event_type: str, param_name: str, grad_norm: float) -> None:
-    key = (param_name, event_type)
-    last = cooldown.get(key, -_COOLDOWN_STEPS - 1)
+def _emit_with_cooldown(
+    global_cooldown: dict[str, int],
+    emitter,
+    project,
+    step: int,
+    event_type: str,
+    param_name: str,
+    grad_norm: float,
+) -> None:
+    last = global_cooldown.get(event_type, -_COOLDOWN_STEPS - 1)
     if step - last < _COOLDOWN_STEPS:
         return
-    cooldown[key] = step
+    global_cooldown[event_type] = step
     _emit_gradient_event(emitter, project, step, event_type, param_name, grad_norm)
 
 

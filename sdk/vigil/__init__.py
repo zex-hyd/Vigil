@@ -32,8 +32,10 @@ if _project_root not in _sys.path:
 try:
     from diagnostic.rule_engine import RuleEngine
     _rule_engine_available = True
-except ImportError:
+    _rule_engine_import_error: str | None = None
+except ImportError as e:
     _rule_engine_available = False
+    _rule_engine_import_error = f"diagnostic import failed ({e!r}) — add repo root to sys.path, e.g. sys.path.insert(0, 'Vigil')"
 
 F = TypeVar("F", bound=Callable)
 
@@ -77,6 +79,8 @@ class _TrainingSession:
         self.auto_wrap_dataloaders = auto_wrap_dataloaders
         self._step = 0
         self._rule_engine = RuleEngine() if _rule_engine_available else None
+        if self._rule_engine is None and _rule_engine_import_error:
+            print(f"Vigil: {_rule_engine_import_error}", file=sys.stderr, flush=True)
 
         def _on_events(events: list[TrainingEvent]) -> None:
             for event in events:
@@ -95,9 +99,10 @@ class _TrainingSession:
         from vigil.hooks import cuda_hook
         cuda_hook.install(self._emitter, self.project, self._step_fn)
 
-    def install_gradient_hooks(self, model) -> None:
+    def install_gradient_hooks(self, model, norm_threshold: float | None = None) -> None:
         from vigil.hooks import gradient_hook
-        gradient_hook.install(model, self._emitter, self.project, self._step_fn, self.norm_threshold)
+        nt = self.norm_threshold if norm_threshold is None else norm_threshold
+        gradient_hook.install(model, self._emitter, self.project, self._step_fn, nt)
 
     def wrap_dataloader(self, dataloader):
         from vigil.hooks import dataloader_profiler
@@ -145,12 +150,16 @@ def current_session() -> _TrainingSession | None:
 
 # ── Convenience helpers users call inside their training function ────────────
 
-def watch_model(model) -> None:
-    """Register gradient hooks on all model parameters. Call after model init."""
+def watch_model(model, norm_threshold: float | None = None) -> None:
+    """Register gradient hooks on all model parameters. Call after model init.
+
+    Pass ``norm_threshold=float('inf')`` to disable gradient explosion / NaN hooks
+    (e.g. pure OOM stress tests).
+    """
     s = current_session()
     if s is None:
         raise RuntimeError("vigil.watch_model() called outside of a @vigil.watch decorated function")
-    s.install_gradient_hooks(model)
+    s.install_gradient_hooks(model, norm_threshold=norm_threshold)
 
 
 def watch_dataloader(dataloader):
