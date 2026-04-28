@@ -92,3 +92,7 @@ pytest tests/ -v
 - **< 0.5% overhead target** — gradient hooks use in-process tensor ops, no subprocess
 - **GPU metrics via pynvml** — no `nvidia-smi` subprocess
 - **Python 3.9+, PyTorch 2.0+**
+
+**Note:** Overhead benchmarks should use a **fixed seed**, **multiple iterations**, and report a **median** (or trimmed mean). A **single Colab run** often shows **±2% noise** due to GPU scheduling and shared-runtime variance — that is normal and not a regression by itself.
+
+**Dataloader bottleneck events** are rate-limited to **at most one emit per 30 seconds** per wrapped `DataLoader` (avoids flooding the terminal when every batch qualifies).

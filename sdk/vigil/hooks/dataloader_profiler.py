@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 
 _GPU_UTIL_THRESHOLD = 0.4   # 40% utilisation
 _LOAD_TIME_THRESHOLD = 0.1  # 100 ms
+# Emit at most one dataloader_bottleneck event per this many seconds (global per wrapped loader).
+_BOTTLENECK_COOLDOWN_S = 30.0
 
 
 def wrap(dataloader, emitter: "Emitter", project: str, step_fn) -> "_ProfiledDataLoader":
@@ -24,24 +26,41 @@ class _ProfiledDataLoader:
         self._project = project
         self._step_fn = step_fn
         self._nvml = _NvmlHandle()
+        self._last_bottleneck_mono: float = 0.0
 
     def __len__(self):
         return len(self._dl)
 
     def __iter__(self) -> Iterator:
-        return _ProfiledIterator(iter(self._dl), self._emitter, self._project, self._step_fn, self._nvml)
+        return _ProfiledIterator(
+            iter(self._dl),
+            self._emitter,
+            self._project,
+            self._step_fn,
+            self._nvml,
+            self,
+        )
 
     def __getattr__(self, name):
         return getattr(self._dl, name)
 
 
 class _ProfiledIterator:
-    def __init__(self, inner_iter, emitter, project, step_fn, nvml: "_NvmlHandle"):
+    def __init__(
+        self,
+        inner_iter,
+        emitter,
+        project,
+        step_fn,
+        nvml: "_NvmlHandle",
+        parent_loader: "_ProfiledDataLoader",
+    ):
         self._iter = inner_iter
         self._emitter = emitter
         self._project = project
         self._step_fn = step_fn
         self._nvml = nvml
+        self._parent = parent_loader
         self._t_start: float | None = None
 
     def __iter__(self):
@@ -66,6 +85,11 @@ class _ProfiledIterator:
         gpu_util = self._nvml.utilization()
         if gpu_util is None or gpu_util >= _GPU_UTIL_THRESHOLD:
             return
+
+        now = time.monotonic()
+        if now - self._parent._last_bottleneck_mono < _BOTTLENECK_COOLDOWN_S:
+            return
+        self._parent._last_bottleneck_mono = now
 
         from vigil.events import TrainingEvent
 
