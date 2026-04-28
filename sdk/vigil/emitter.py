@@ -63,6 +63,14 @@ class Emitter:
         except Exception:
             pass
 
+    def flush_now(self) -> None:
+        """Deliver queued events synchronously on the calling thread.
+
+        Jupyter/Colab sometimes does not capture stdout from daemon threads — call this
+        after fatal events (e.g. CUDA OOM) so diagnostics appear in the cell output.
+        """
+        self._drain()
+
     def shutdown(self, wait: bool = True) -> None:
         self._stop.set()
         if wait:

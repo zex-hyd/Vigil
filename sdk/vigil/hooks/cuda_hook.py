@@ -105,6 +105,8 @@ def capture_if_cuda_oom(emitter: "Emitter", project: str, step_fn, exc: BaseExce
         return
     try:
         _capture_oom(emitter, project, step_fn, exc, torch)
+        # Deliver on caller thread — Colab/Jupyter often hides daemon-thread prints.
+        emitter.flush_now()
     except Exception:
         pass
 
@@ -116,7 +118,10 @@ def _is_cuda_oom(exc) -> bool:
     exc_type_name = type(exc).__name__
     if exc_type_name == "OutOfMemoryError":
         return True
-    if isinstance(exc, RuntimeError) and "CUDA out of memory" in str(exc):
+    msg = str(exc).lower()
+    if "out of memory" in msg and ("cuda" in msg or "cublas" in msg or "cudnn" in msg):
+        return True
+    if isinstance(exc, RuntimeError) and "out of memory" in msg:
         return True
     return False
 
